@@ -65,7 +65,18 @@ export async function prepareAuth(address: string): Promise<{ message: string; n
   }
 }
 
-export async function authenticateWithWallet(address: string): Promise<boolean> {
+export interface AuthResult {
+  token: string;
+  agent: {
+    id: string;
+    walletAddress: string;
+    balance: number;
+    tier: string;
+    status: string;
+  };
+}
+
+export async function authenticateWithWallet(address: string): Promise<AuthResult | null> {
   try {
     const response = await fetch('/v1/auth/prepare', {
       method: 'POST',
@@ -76,7 +87,10 @@ export async function authenticateWithWallet(address: string): Promise<boolean> 
       }),
     });
 
-    if (!response.ok) return false;
+    if (!response.ok) {
+      console.error('Prepare auth failed:', response.status);
+      return null;
+    }
 
     const { message } = await response.json();
     
@@ -98,9 +112,19 @@ export async function authenticateWithWallet(address: string): Promise<boolean> 
       }),
     });
 
-    return authResponse.ok;
+    if (!authResponse.ok) {
+      const error = await authResponse.json();
+      console.error('Session creation failed:', error);
+      return null;
+    }
+
+    const data = await authResponse.json();
+    return {
+      token: data.token,
+      agent: data.agent,
+    };
   } catch (error) {
     console.error('Wallet authentication failed:', error);
-    return false;
+    return null;
   }
 }

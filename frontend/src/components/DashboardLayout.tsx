@@ -142,10 +142,14 @@ export default function DashboardLayout() {
   const handleWalletConnect = useCallback(async (walletAddress: string) => {
     setConnecting(true);
     try {
-      const success = await authenticateWithWallet(walletAddress);
-      if (!success) {
+      const result = await authenticateWithWallet(walletAddress);
+      if (!result) {
         console.error('Wallet authentication failed');
+        return;
       }
+      
+      localStorage.setItem("maltheron_token", result.token);
+      window.location.reload();
     } catch (error) {
       console.error('Wallet connection error:', error);
     } finally {
