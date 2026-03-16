@@ -1,0 +1,51 @@
+{
+  "name": "maltheron",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run dev:backend & bun run dev:frontend",
+    "dev:backend": "bun run src/index.ts",
+    "dev:frontend": "cd frontend && vite",
+    "convex:dev": "convex dev",
+    "build": "cd frontend && vite build",
+    "build:backend": "bun build src/index.ts --outdir dist --target bun",
+    "test": "bun test",
+    "test:unit": "bun test tests/unit",
+    "test:integration": "bun test tests/integration",
+    "admin:bootstrap": "bun run scripts/admin-bootstrap.ts"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.1.1",
+    "@elysiajs/jwt": "^1.1.1",
+    "@sentry/bun": "^8.0.0",
+    "elysia-rate-limit": "^4.4.2",
+    "@tanstack/react-query": "^5.90.21",
+    "convex": "^1.19.4",
+    "dotenv": "^17.3.1",
+    "elysia": "^1.1.23",
+    "pino": "^9.6.0",
+    "pino-pretty": "^11.3.0",
+    "siwe": "^3.0.0",
+    "viem": "^2.46.3",
+    "wagmi": "^3.5.0"
+  },
+  "devDependencies": {
+    "geist": "^1.3.0",
+    "@types/bun": "latest",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

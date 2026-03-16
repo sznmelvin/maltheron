@@ -1,0 +1,4 @@
+{
+  "$schema": "https://github.com/get-convex/convex/blob/main/packages/cli/convex.schema.json",
+  "functions": "convex/"
+}
