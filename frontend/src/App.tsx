@@ -1,11 +1,11 @@
-import { AuthProvider } from "./hooks/useAuth";
+import { AuthProvider } from "./hooks/useSolanaAuth";
 import { ConvexProvider } from "./lib/ConvexProvider";
-import { WalletProvider } from "./lib/WalletProvider";
+import { SolanaProvider } from "./lib/SolanaProvider";
 import DashboardLayout from "./components/DashboardLayout";
 
 export default function App() {
   return (
-    <WalletProvider>
+    <SolanaProvider>
       <ConvexProvider>
         <AuthProvider>
           <div className="min-h-screen bg-background text-textPrimary font-tiktok antialiased">
@@ -13,6 +13,6 @@ export default function App() {
           </div>
         </AuthProvider>
       </ConvexProvider>
-    </WalletProvider>
+    </SolanaProvider>
   );
 }

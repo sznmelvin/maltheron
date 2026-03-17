@@ -1,0 +1,18 @@
+{
+  "name": "maltheron-solana",
+  "version": "0.1.0",
+  "description": "Solana program for Maltheron USDC payments",
+  "scripts": {
+    "deploy": "ts-node deploy.ts",
+    "build": "solana-program build"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.91.0",
+    "@solana/spl-token": "^0.4.0",
+    "@coral-xyz/anchor": "^0.30.1"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  }
+}
