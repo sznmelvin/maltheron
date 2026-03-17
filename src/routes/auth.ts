@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ConvexHttpClient } from "convex/browser";
-import { createPublicClient, http, recoverMessageAddress } from "viem";
+import { createPublicClient, http, recoverMessageAddress, recoverAddress } from "viem";
 import { baseSepolia, baseMainnet } from "../lib/blockchain";
 import { api } from "../../convex/_generated/api";
 import pino from "pino";
@@ -35,8 +35,7 @@ async function verifyWalletSignature(
   chainId: number = 84532
 ): Promise<boolean> {
   try {
-    const client = getViemClient(chainId);
-    const recoveredAddress = await client.recoverMessageAddress({
+    const recoveredAddress = await recoverMessageAddress({
       message,
       signature,
     });
