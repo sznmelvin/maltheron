@@ -40,8 +40,13 @@ async function verifyWalletSignature(
       message,
       signature,
     });
-    return recoveredAddress.toLowerCase() === expectedAddress.toLowerCase();
-  } catch {
+    const isValid = recoveredAddress.toLowerCase() === expectedAddress.toLowerCase();
+    if (!isValid) {
+      logger.warn({ expected: expectedAddress, recovered: recoveredAddress }, "Signature recovery address mismatch");
+    }
+    return isValid;
+  } catch (err) {
+    logger.error({ error: String(err), chainId }, "Signature verification failed");
     return false;
   }
 }

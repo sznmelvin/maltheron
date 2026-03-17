@@ -13,12 +13,14 @@ export interface SIWEMessage {
   chainId: number;
 }
 
-export async function generateSIWE(address: string, nonce?: string): Promise<{ message: string; nonce: string }> {
+export async function generateSIWE(address: string, nonce?: string, domain: string = "maltheron.network", chainId: number = 84532): Promise<{ message: string; nonce: string }> {
   const nonceStr = nonce || Math.random().toString(36).substring(2, 15);
   
   const message = `Sign in to Maltheron
 
 Address: ${address}
+Domain: ${domain}
+Chain ID: ${chainId}
 Nonce: ${nonceStr}
 
 This signature verifies your wallet ownership and creates a session.`;
