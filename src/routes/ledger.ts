@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 import { parseProtocolPayload, generateSIWEMessage } from "../lib/protocol";
+import { CONTRACT_ADDRESSES, getChainConfig } from "../lib/contract";
 import pino from "pino";
 import { ledgerRateLimit } from "../lib/rate-limit";
 
@@ -338,4 +339,23 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         toAddress: t.Optional(t.String()),
       }),
     }
-  );
+  )
+  .get("/contract", async ({ set }) => {
+    const chainId = 84532; // Base Sepolia default
+    const config = getChainConfig(chainId);
+    
+    return {
+      chain: "base-sepolia",
+      chainId: chainId,
+      contractAddress: config.contractAddress || null,
+      usdcAddress: config.usdcAddress,
+      feeBps: 10,
+      feePercentage: "0.1%",
+      status: config.contractAddress ? "active" : "not_deployed",
+      instructions: config.contractAddress ? null : {
+        step1: "Deploy MaltheronPaymentRouter contract to Base Sepolia",
+        step2: "Set CONTRACT_ADDRESS in environment variables",
+        step3: "Restart server"
+      }
+    };
+  });
