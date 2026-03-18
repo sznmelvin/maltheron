@@ -197,19 +197,12 @@ export default function DashboardLayout() {
               <div className="text-textSecondary">
                 <span className="text-textPrimary mr-2">$</span> {content.terminal.command}
               </div>
-              
+               
               <div className="text-textSecondary mt-2 md:mt-4 text-xs font-tiktok flex items-center gap-2 flex-wrap">
                 <span className="shrink-0">{content.terminal.description}</span>
                 <span className="ml-auto">
                   {connecting ? (
                     <span className="text-textSecondary">Authenticating...</span>
-                  ) : connected ? (
-                    <button 
-                      onClick={() => handleWalletConnect(address || "")}
-                      className="text-textPrimary underline underline-offset-4 hover:text-textSecondary transition-colors font-tiktok"
-                    >
-                      Click to sign in ↗
-                    </button>
                   ) : (
                     <WalletButton onConnect={handleWalletConnect} size="sm" />
                   )}
