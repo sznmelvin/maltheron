@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from "../hooks/useSolanaAuth";
 import { useAgentMetrics, useMemoryQuery } from "../hooks/useConvex";
-import { useWallet } from "../hooks/useWallet";
-import { authenticateWithWallet } from "../lib/siwe";
+import { useSolanaWallet } from "../lib/SolanaProvider";
 import MetricCard from "./MetricCard";
 import LedgerStream from "./LedgerStream";
 import ApiPlayground from "./ApiPlayground";
@@ -119,7 +118,7 @@ function CopyButton({ text, onCopy }: { text: string; onCopy?: (text: string) =>
 
 export default function DashboardLayout() {
   const { agent, loading: authLoading, login, logout, isAuthenticated, token } = useAuth();
-  const { isConnected, address, isOnTestnet } = useWallet();
+  const { connected, address } = useSolanaWallet();
   const { metrics, refresh: refreshMetrics } = useAgentMetrics(token);
   const memory = useMemoryQuery(token);
   const [timeframe, setTimeframe] = useState("last_30d");
@@ -142,14 +141,8 @@ export default function DashboardLayout() {
   const handleWalletConnect = useCallback(async (walletAddress: string) => {
     setConnecting(true);
     try {
-      const result = await authenticateWithWallet(walletAddress);
-      if (!result) {
-        console.error('Wallet authentication failed');
-        return;
-      }
-      
-      localStorage.setItem("maltheron_token", result.token);
-      window.location.reload();
+      const { login } = useAuth();
+      await login();
     } catch (error) {
       console.error('Wallet connection error:', error);
     } finally {
@@ -226,7 +219,7 @@ export default function DashboardLayout() {
                 <span className="ml-auto">
                   {connecting ? (
                     <span className="text-textSecondary">Authenticating...</span>
-                  ) : isConnected ? (
+                  ) : connected ? (
                     <button 
                       onClick={() => handleWalletConnect(address || "")}
                       className="text-textPrimary underline underline-offset-4 hover:text-textSecondary transition-colors font-tiktok"
@@ -267,8 +260,8 @@ export default function DashboardLayout() {
             <span className="text-xs font-mono text-textSecondary bg-background px-2 py-1 rounded">
               {agent?.tier?.toUpperCase() || "STANDARD"}
             </span>
-            <span className={`text-xs font-mono px-2 py-1 rounded ${isOnTestnet ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
-              {isOnTestnet ? "Base Sepolia" : "Base Mainnet"}
+            <span className="text-xs font-mono text-textSecondary bg-background px-2 py-1 rounded">
+              Solana Devnet
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-success"></span>

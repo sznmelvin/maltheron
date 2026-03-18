@@ -1,4 +1,4 @@
-import { useWallet, useNeedsNetworkSwitch } from "../hooks/useWallet";
+import { useSolanaWallet } from "../lib/SolanaProvider";
 
 export default function WalletButton({ 
   onConnect,
@@ -7,23 +7,10 @@ export default function WalletButton({
   onConnect?: (address: string) => void;
   size?: "sm" | "md" | "lg";
 }) {
-  const { 
-    isConnected, 
-    address, 
-    isOnTestnet,
-    formattedBalance,
-    connectWallet, 
-    disconnectWallet,
-    switchToTestnet,
-  } = useWallet();
+  const { connected, address, connect, disconnect } = useSolanaWallet();
   
-  const { needsSwitch, switchToTestnet: doSwitch } = useNeedsNetworkSwitch();
-
   const handleConnect = async () => {
-    if (needsSwitch) {
-      await doSwitch();
-    }
-    await connectWallet();
+    await connect();
     
     if (address && onConnect) {
       onConnect(address);
@@ -31,7 +18,7 @@ export default function WalletButton({
   };
 
   const handleDisconnect = () => {
-    disconnectWallet();
+    disconnect();
   };
 
   const formatAddress = (addr: string) => {
@@ -44,7 +31,7 @@ export default function WalletButton({
     lg: "px-6 py-3 text-base",
   };
 
-  if (!isConnected) {
+  if (!connected) {
     return (
       <button
         onClick={handleConnect}
@@ -57,25 +44,11 @@ export default function WalletButton({
 
   return (
     <div className="flex items-center gap-3">
-      {needsSwitch && (
-        <button
-          onClick={doSwitch}
-          className="px-3 py-1.5 text-xs font-geist bg-warning/20 text-warning rounded-lg hover:bg-warning/30 transition-colors"
-        >
-          Switch to Base Sepolia
-        </button>
-      )}
-      
       <div className="flex items-center gap-2 bg-surface rounded-lg px-3 py-2">
         <div className="flex flex-col items-end">
           <span className="font-mono text-xs text-textPrimary">
             {formatAddress(address || "")}
           </span>
-          {formattedBalance && (
-            <span className="font-mono text-xs text-textSecondary">
-              {parseFloat(formattedBalance).toFixed(4)} ETH
-            </span>
-          )}
         </div>
         
         <div className="w-2 h-2 rounded-full bg-success"></div>
@@ -88,19 +61,5 @@ export default function WalletButton({
         Disconnect
       </button>
     </div>
-  );
-}
-
-export function NetworkBadge() {
-  const { isOnTestnet, chainId } = useWallet();
-  
-  return (
-    <span className={`text-xs font-mono px-2 py-1 rounded ${
-      isOnTestnet 
-        ? "bg-success/20 text-success" 
-        : "bg-warning/20 text-warning"
-    }`}>
-      {isOnTestnet ? "Base Sepolia" : "Base Mainnet"}
-    </span>
   );
 }
