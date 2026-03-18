@@ -148,7 +148,7 @@ export default function DashboardLayout() {
     return (
       <div className="min-h-screen bg-background relative overflow-hidden flex flex-col">
         <div className="absolute top-32 right-[-10%] text-[8rem] font-geist text-textSecondary/5 whitespace-nowrap pointer-events-none select-none hidden md:block">
-          M2M_OS // 0x402
+          M2M_OS // Solana
         </div>
 
         <div className="absolute top-0 right-0 w-1/4 h-full bg-stripe-pattern opacity-50 pointer-events-none hidden md:block"></div>

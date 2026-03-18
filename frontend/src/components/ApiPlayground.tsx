@@ -22,7 +22,6 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
   const [error, setError] = useState<string | null>(null);
 
   const [transactForm, setTransactForm] = useState({
-    protocol: "x402" as "x402" | "AP2",
     targetWallet: "",
     amount: 100,
     currency: "USDC",
@@ -47,12 +46,10 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          protocol: transactForm.protocol,
           payload: {
-            targetWallet: transactForm.targetWallet || agent?.walletAddress || "0x0000000000000000000000000000000000000000",
+            targetWallet: transactForm.targetWallet || agent?.walletAddress || "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsN",
             amount: transactForm.amount,
             currency: transactForm.currency,
-            signature: "dev_signature",
           },
         }),
       });
@@ -152,21 +149,14 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
       <div className="p-5 space-y-4">
         {activeTab === "transact" && (
           <>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <div>
                 <label className="block text-xs font-geist text-textSecondary mb-2">
-                  Protocol
+                  Blockchain
                 </label>
-                <select
-                  value={transactForm.protocol}
-                  onChange={(e) =>
-                    setTransactForm({ ...transactForm, protocol: e.target.value as "x402" | "AP2" })
-                  }
-                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary focus:outline-none focus:ring-2 focus:ring-accent"
-                >
-                  <option value="x402">x402</option>
-                  <option value="AP2">AP2</option>
-                </select>
+                <div className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary">
+                  Solana (USDC)
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-geist text-textSecondary mb-2">

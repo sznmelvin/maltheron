@@ -35,13 +35,12 @@ export default function LedgerStream({ agentId, token }: LedgerStreamProps) {
   };
 
   const getProtocolBadge = (protocol?: string) => {
-    const proto = protocol || "AP2";
+    const proto = protocol || "solana";
     const colors: Record<string, string> = {
-      x402: "bg-surface text-textSecondary",
-      AP2: "bg-surface text-textSecondary",
+      solana: "bg-surface text-textSecondary",
     };
     return (
-      <span className={`px-2 py-0.5 rounded text-xs font-mono ${colors[proto] || colors.AP2}`}>
+      <span className={`px-2 py-0.5 rounded text-xs font-mono ${colors[proto] || colors.solana}`}>
         {proto}
       </span>
     );

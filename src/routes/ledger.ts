@@ -2,7 +2,6 @@ import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
-import { parseProtocolPayload, generateSIWEMessage } from "../lib/protocol";
 import { getSolanaConfig, setTreasuryWallet, getNetworkFromChainId, getUSDCBalance, getExplorerUrl } from "../lib/solana";
 import pino from "pino";
 import { ledgerRateLimit } from "../lib/rate-limit";
@@ -49,7 +48,18 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         return { error: "Agent is suspended" };
       }
 
-      const { protocol, payload, idempotencyKey } = body;
+      const { payload, idempotencyKey } = body as { payload: any; idempotencyKey?: string };
+
+      if (!payload || !payload.targetWallet || !payload.amount) {
+        set.status = 400;
+        return { error: "Invalid payload", details: "Missing targetWallet or amount" };
+      }
+
+      // Validate Solana address
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(payload.targetWallet)) {
+        set.status = 400;
+        return { error: "Invalid payload", details: "Invalid Solana address format" };
+      }
 
       if (idempotencyKey) {
         const existing = await convex.query(api.idempotency.get, { key: idempotencyKey });
@@ -59,22 +69,18 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
             status: "settled" as const,
             hash: existing.transactionHash,
             idempotent: true,
-            protocol,
+            protocol: "solana",
             timestamp: existing.createdAt,
           };
         }
       }
 
-      const parsed = parseProtocolPayload(protocol, payload);
-
-      if (!parsed.isValid) {
-        set.status = 400;
-        return { 
-          error: "Invalid payload", 
-          details: parsed.validationError,
-          protocol 
-        };
-      }
+      const parsed = {
+        isValid: true,
+        targetWallet: payload.targetWallet,
+        amount: payload.amount,
+        currency: payload.currency || "USDC",
+      };
 
       const transactionType = parsed.targetWallet.toLowerCase() === agent.walletAddress.toLowerCase() 
         ? "credit" 
@@ -86,14 +92,11 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         currency: parsed.currency,
         type: transactionType,
         metadata: {
-          protocol,
+          protocol: "solana",
           targetWallet: parsed.targetWallet,
-          signature: parsed.signature || "dev_mode",
           sourceWallet: agent.walletAddress,
-          message: parsed.message,
-          ...parsed.metadata,
         },
-        protocol,
+        protocol: "solana",
       });
 
       if (idempotencyKey) {
@@ -110,7 +113,7 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         amount: parsed.amount,
         currency: parsed.currency,
         type: transactionType,
-        protocol,
+        protocol: "solana",
         hash: result.hash,
         fee: result.fee,
         idempotencyKey: idempotencyKey || undefined,
@@ -121,22 +124,17 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         hash: result.hash,
         fee_deducted: result.fee,
         net_amount: result.netAmount,
-        protocol,
+        protocol: "solana",
         transaction_type: transactionType,
         timestamp: Date.now(),
       };
     },
     {
       body: t.Object({
-        protocol: t.Union([t.Literal("x402"), t.Literal("AP2")]),
         payload: t.Object({
           targetWallet: t.String(),
           amount: t.Number(),
-          currency: t.String(),
-          signature: t.Optional(t.String()),
-          message: t.Optional(t.String()),
-          taskId: t.Optional(t.String()),
-          workflowId: t.Optional(t.String()),
+          currency: t.Optional(t.String()),
         }),
         idempotencyKey: t.Optional(t.String()),
       }),
@@ -159,46 +157,32 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         return { error: "Invalid or expired token" };
       }
 
-      const { protocol, targetWallet, amount, currency } = body as {
-        protocol: "x402" | "AP2";
+      const { targetWallet, amount, currency } = body as {
         targetWallet: string;
         amount: number;
-        currency: string;
+        currency?: string;
       };
 
-      const parsed = parseProtocolPayload(protocol, { targetWallet, amount, currency });
-      
-      if (!parsed.isValid) {
+      // Basic validation for Solana addresses
+      if (!targetWallet || targetWallet.length < 32 || targetWallet.length > 44) {
         set.status = 400;
-        return { error: "Invalid payload", details: parsed.validationError };
+        return { error: "Invalid payload", details: "Invalid Solana address format" };
       }
 
       const nonce = generateNonce();
       const expiresAt = Date.now() + 15 * 60 * 1000;
 
-      const message = generateSIWEMessage({
-        domain: "maltheron.network",
-        address: agent.walletAddress,
-        nonce,
-        expiresAt,
-      });
-
       return {
         nonce,
         expiresAt,
-        message,
-        conditions: {
-          expiresAt,
-          nonce,
-        },
+        instructions: "Use Phantom wallet to sign and send USDC transaction",
       };
     },
     {
       body: t.Object({
-        protocol: t.Union([t.Literal("x402"), t.Literal("AP2")]),
         targetWallet: t.String(),
         amount: t.Number(),
-        currency: t.String(),
+        currency: t.Optional(t.String()),
       }),
     }
   )
