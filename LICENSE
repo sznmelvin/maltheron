@@ -19,3 +19,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Open Core Note
+
+This repository contains the **core** Maltheron code, which is licensed under the
+MIT License above. This includes:
+
+- Database schema (Convex)
+- API logic (Elysia)
+- Frontend dashboard (React)
+- Protocol implementations
+
+The **hosted Maltheron platform** is proprietary and not included in this
+repository. If you're looking to run your own instance, you're free to use
+the MIT-licensed code, but the Maltheron brand and trademarks remain
+proprietary.
+
+For the hosted service, visit: https://maltheron.network
