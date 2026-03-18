@@ -7,70 +7,55 @@ import LedgerStream from "./LedgerStream";
 import ApiPlayground from "./ApiPlayground";
 import WalletButton from "./WalletButton";
 
-type TabType = "Maltheron Core" | "x402 Protocol" | "AP2 Sync" | "Memory";
+type TabType = "Maltheron Core" | "Solana Transfer" | "USDC Payments" | "Memory";
 
 const TAB_CONTENT: Record<TabType, { json: string; terminal: { command: string; description: string } }> = {
   "Maltheron Core": {
     json: `{
   "agentConfig": {
     "maltheron": {
-      "protocol": "x402",
+      "blockchain": "solana",
+      "network": "devnet",
       "autoSettle": true,
       "taxEngine": "autonomous"
     },
     "env": {
-      "NETWORK": "base-sepolia",
-      "FEE_TIER": "standard",
-      "RPC_ENDPOINT": "wss://api.maltheron.network"
+      "NETWORK": "solana-devnet",
+      "FEE_TIER": "standard"
     }
   }
 }`,
     terminal: {
-      command: "$ bunx maltheron init agent --network base-sepolia",
-      description: "Initialize a new agent with Base Sepolia testnet configuration.",
+      command: "$ bunx maltheron init agent --network solana-devnet",
+      description: "Initialize a new agent with Solana Devnet configuration.",
     },
   },
-  "x402 Protocol": {
+  "Solana Transfer": {
     json: `{
   "protocol": {
-    "version": "2.0",
-    "spec": "https://x402.org/spec",
-    "payment": {
-      "currency": "USDC",
-      "chain": "base-sepolia",
-      "settlement": "per-request"
-    },
-    "headers": {
-      "402-Payment-Required": {
-        "amount": "0.01",
-        "recipient": "0x..."
-      }
-    }
+    "blockchain": "solana",
+    "network": "devnet",
+    "currency": "USDC",
+    "settlement": "on-chain"
   }
 }`,
     terminal: {
-      command: "$ curl -H '402-Payment-Required: amount=0.01' https://api.maltheron.network/data",
-      description: "Make a micropayment request using x402 protocol headers.",
+      command: "$ solana transfer --recipient <WALLET> --amount 100 --token USDC",
+      description: "Transfer USDC on Solana blockchain.",
     },
   },
-  "AP2 Sync": {
+  "USDC Payments": {
     json: `{
-  "ap2": {
-    "endpoint": "wss://api.maltheron.network/sync",
-    "protocol": "websocket",
-    "authentication": {
-      "type": "siwe",
-      "wallet": "0x..."
-    },
-    "features": {
-      "realTimeLedger": true,
-      "autoReconciliation": true
-    }
+  "payment": {
+    "currency": "USDC",
+    "blockchain": "solana",
+    "network": "devnet",
+    "fee": "0.1%"
   }
 }`,
     terminal: {
-      command: "$ bunx maltheron sync --mode ap2 --wallet 0x...",
-      description: "Sync ledger state via AP2 WebSocket protocol.",
+      command: "$ maltheron pay --amount 100 --to <WALLET> --token USDC",
+      description: "Make a USDC payment with automatic 0.1% fee.",
     },
   },
   "Memory": {
@@ -118,7 +103,7 @@ function CopyButton({ text, onCopy }: { text: string; onCopy?: (text: string) =>
 
 export default function DashboardLayout() {
   const { agent, loading: authLoading, login, logout, isAuthenticated, token } = useAuth();
-  const { connected, address } = useSolanaWallet();
+  const { connected, address, connect } = useSolanaWallet();
   const { metrics, refresh: refreshMetrics } = useAgentMetrics(token);
   const memory = useMemoryQuery(token);
   const [timeframe, setTimeframe] = useState("last_30d");
@@ -141,14 +126,13 @@ export default function DashboardLayout() {
   const handleWalletConnect = useCallback(async (walletAddress: string) => {
     setConnecting(true);
     try {
-      const { login } = useAuth();
-      await login();
+      await connect();
     } catch (error) {
       console.error('Wallet connection error:', error);
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [connect]);
 
   if (authLoading) {
     return (
