@@ -13,18 +13,16 @@ interface ApiPlaygroundProps {
   token?: string | null;
 }
 
-type Tab = "transact" | "memory" | "account";
+type Tab = "verify" | "memory" | "account";
 
 export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("transact");
+  const [activeTab, setActiveTab] = useState<Tab>("verify");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [transactForm, setTransactForm] = useState({
-    targetWallet: "",
-    amount: 100,
-    currency: "USDC",
+  const [verifyForm, setVerifyForm] = useState({
+    txHash: "",
   });
 
   const [memoryForm, setMemoryForm] = useState({
@@ -32,31 +30,27 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
     timeframe: "last_30d",
   });
 
-  const executeTransact = async () => {
+  const executeVerify = async () => {
     if (!token) return;
     setLoading(true);
     setError(null);
     setResult(null);
 
     try {
-      const res = await fetch("/v1/ledger/transact", {
+      const res = await fetch("/v1/ledger/verify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          payload: {
-            targetWallet: transactForm.targetWallet || agent?.walletAddress || "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsN",
-            amount: transactForm.amount,
-            currency: transactForm.currency,
-          },
+          txHash: verifyForm.txHash,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Transaction failed");
+        setError(data.error || "Verification failed");
       } else {
         setResult(data);
       }
@@ -131,7 +125,7 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
       </div>
 
       <div className="flex border-b border-border">
-        {(["transact", "memory", "account"] as Tab[]).map((tab) => (
+        {(["verify", "memory", "account"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -147,70 +141,45 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
       </div>
 
       <div className="p-5 space-y-4">
-        {activeTab === "transact" && (
+        {activeTab === "verify" && (
           <>
-            <div className="grid grid-cols-1 gap-4">
-              <div>
-                <label className="block text-xs font-geist text-textSecondary mb-2">
-                  Blockchain
-                </label>
-                <div className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary">
-                  Solana (USDC)
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-geist text-textSecondary mb-2">
-                  Currency
-                </label>
-                <select
-                  value={transactForm.currency}
-                  onChange={(e) =>
-                    setTransactForm({ ...transactForm, currency: e.target.value })
-                  }
-                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary focus:outline-none focus:ring-2 focus:ring-accent"
-                >
-                  <option value="USDC">USDC</option>
-                  <option value="ETH">ETH</option>
-                </select>
-              </div>
+            <div className="bg-info/10 border border-info/20 rounded-lg px-4 py-3">
+              <p className="text-xs font-geist text-info">
+                Submit your SOL transfer txHash. Fee transfer to treasury must already be sent.
+              </p>
             </div>
 
             <div>
               <label className="block text-xs font-geist text-textSecondary mb-2">
-                Target Wallet (leave empty for self-credit)
+                Transaction Hash (txHash)
               </label>
               <input
                 type="text"
-                value={transactForm.targetWallet}
+                value={verifyForm.txHash}
                 onChange={(e) =>
-                  setTransactForm({ ...transactForm, targetWallet: e.target.value })
+                  setVerifyForm({ ...verifyForm, txHash: e.target.value })
                 }
-                placeholder={agent?.walletAddress || "0x..."}
+                placeholder="Enter Solana transaction signature..."
                 className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary placeholder:text-textSecondary/50 focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-geist text-textSecondary mb-2">
-                Amount
-              </label>
-              <input
-                type="number"
-                value={transactForm.amount}
-                onChange={(e) =>
-                  setTransactForm({ ...transactForm, amount: parseFloat(e.target.value) || 0 })
-                }
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-
             <button
-              onClick={executeTransact}
-              disabled={loading}
+              onClick={executeVerify}
+              disabled={loading || !verifyForm.txHash}
               className="w-full bg-accent hover:bg-gray-800 disabled:bg-gray-400 text-white font-geist font-medium py-2.5 rounded-lg transition-colors"
             >
-              {loading ? "Processing..." : "Execute Transaction"}
+              {loading ? "Verifying..." : "Verify Transaction"}
             </button>
+
+            <div className="text-xs text-textSecondary space-y-1">
+              <p className="font-geist font-medium text-textPrimary">Two-Transfer Flow:</p>
+              <ol className="list-decimal list-inside space-y-1 ml-2">
+                <li>Send SOL to recipient (via Phantom)</li>
+                <li>Send 0.1% fee to treasury wallet (via Phantom)</li>
+                <li>Paste main txHash here to verify</li>
+              </ol>
+            </div>
           </>
         )}
 
@@ -289,7 +258,7 @@ export default function ApiPlayground({ agent, token }: ApiPlaygroundProps) {
               <div className="flex justify-between">
                 <span className="text-xs font-geist text-textSecondary">Balance</span>
                 <span className="font-mono text-xs text-success">
-                  {agent?.balance?.toFixed(2)} USDC
+                  {agent?.balance?.toFixed(4)} SOL
                 </span>
               </div>
             </div>

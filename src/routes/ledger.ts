@@ -2,7 +2,15 @@ import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
-import { getSolanaConfig, setTreasuryWallet, getNetworkFromChainId, getUSDCBalance, getExplorerUrl } from "../lib/solana";
+import { 
+  verifyTransaction, 
+  verifyFeeTransfer,
+  setTreasuryWallet, 
+  getTreasuryWallet,
+  isValidTransactionSignature,
+  getExplorerUrl,
+  FEE_BPS 
+} from "../lib/solana";
 import pino from "pino";
 import { ledgerRateLimit } from "../lib/rate-limit";
 
@@ -11,22 +19,16 @@ const logger = pino({ name: "maltheron:ledger" });
 function getConvexClient(): ConvexHttpClient {
   const url = process.env.CONVEX_URL;
   if (!url) {
-    throw new Error("CONVEX_URL environment variable is not set. Run `npx convex dev` first.");
+    throw new Error("CONVEX_URL environment variable is not set.");
   }
   return new ConvexHttpClient(url);
-}
-
-function generateNonce(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
   .use(cors())
   .use(ledgerRateLimit)
   .post(
-    "/transact",
+    "/verify",
     async ({ body, headers, set }) => {
       const convex = getConvexClient();
       const authHeader = headers.authorization || headers.Authorization;
@@ -48,141 +50,136 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
         return { error: "Agent is suspended" };
       }
 
-      const { payload, idempotencyKey } = body as { payload: any; idempotencyKey?: string };
+      const { txHash } = body as {
+        txHash: string;
+      };
 
-      if (!payload || !payload.targetWallet || !payload.amount) {
+      if (!txHash) {
         set.status = 400;
-        return { error: "Invalid payload", details: "Missing targetWallet or amount" };
+        return { error: "Missing txHash" };
       }
 
-      // Validate Solana address
-      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(payload.targetWallet)) {
+      if (!isValidTransactionSignature(txHash)) {
         set.status = 400;
-        return { error: "Invalid payload", details: "Invalid Solana address format" };
+        return { error: "Invalid transaction signature format" };
       }
 
-      if (idempotencyKey) {
-        const existing = await convex.query(api.idempotency.get, { key: idempotencyKey });
-        if (existing && existing.agentId === agent._id) {
-          logger.info({ idempotencyKey, agentId: agent._id, hash: existing.transactionHash }, "Idempotent request returning cached result");
-          return {
-            status: "settled" as const,
-            hash: existing.transactionHash,
-            idempotent: true,
-            protocol: "solana",
-            timestamp: existing.createdAt,
+      const treasuryWallet = getTreasuryWallet();
+      
+      try {
+        const verificationResult = await verifyTransaction(txHash);
+
+        if (!verificationResult.valid) {
+          logger.warn({ txHash, error: verificationResult.error, agentId: agent._id }, "Transaction verification failed");
+          set.status = 400;
+          return { 
+            valid: false, 
+            error: verificationResult.error || "Transaction verification failed" 
           };
         }
-      }
 
-      const parsed = {
-        isValid: true,
-        targetWallet: payload.targetWallet,
-        amount: payload.amount,
-        currency: payload.currency || "USDC",
-      };
+        const txn = verificationResult.transaction!;
+        
+        if (!treasuryWallet) {
+          set.status = 500;
+          return { 
+            valid: false,
+            error: "Treasury wallet not configured on server" 
+          };
+        }
 
-      const transactionType = parsed.targetWallet.toLowerCase() === agent.walletAddress.toLowerCase() 
-        ? "credit" 
-        : "debit";
+        const feeVerification = await verifyFeeTransfer(
+          txHash,
+          txn.amount,
+          treasuryWallet
+        );
 
-      const result = await convex.mutation(api.transactions.record, {
-        agentId: agent._id as string,
-        amount: parsed.amount,
-        currency: parsed.currency,
-        type: transactionType,
-        metadata: {
+        if (!feeVerification.valid) {
+          logger.warn({ 
+            txHash, 
+            error: feeVerification.error, 
+            agentId: agent._id,
+            expectedFee: txn.fee 
+          }, "Fee transfer not verified");
+          set.status = 400;
+          return { 
+            valid: false, 
+            error: "Fee not paid to treasury wallet",
+            details: feeVerification.error,
+            requiredFee: txn.fee,
+            treasuryWallet: treasuryWallet,
+          };
+        }
+
+        const transactionType = txn.to === agent.walletAddress ? "credit" : "debit";
+
+        const recordResult = await convex.mutation(api.transactions.record, {
+          agentId: agent._id as any,
+          amount: txn.netAmount,
+          currency: "SOL",
+          type: transactionType,
+          metadata: {
+            protocol: "solana",
+            mainTxHash: txHash,
+            feeTxHash: feeVerification.feeTxHash,
+            chainId: "solana:mainnet",
+            isOnChain: true,
+            sender: txn.from,
+            receiver: txn.to,
+            grossAmount: txn.amount,
+            fee: txn.fee,
+            treasuryWallet: treasuryWallet,
+          },
           protocol: "solana",
-          targetWallet: parsed.targetWallet,
-          sourceWallet: agent.walletAddress,
-        },
-        protocol: "solana",
-      });
-
-      if (idempotencyKey) {
-        await convex.mutation(api.idempotency.create, {
-          key: idempotencyKey,
-          agentId: agent._id,
-          transactionHash: result.hash,
         });
+
+        logger.info({
+          agentId: agent._id,
+          walletAddress: agent.walletAddress,
+          amount: txn.netAmount,
+          currency: "SOL",
+          type: transactionType,
+          txHash,
+          feeTxHash: feeVerification.feeTxHash,
+          hash: recordResult.hash,
+          verified: true,
+        }, "Solana transaction verified and recorded");
+
+        return {
+          valid: true,
+          verified: true,
+          recorded: true,
+          transaction: {
+            hash: recordResult.hash,
+            txHash,
+            amount: txn.amount,
+            netAmount: txn.netAmount,
+            fee: txn.fee,
+            currency: "SOL",
+            type: transactionType,
+            from: txn.from,
+            to: txn.to,
+            slot: txn.slot,
+            timestamp: txn.timestamp,
+          },
+          feeTransfer: {
+            verified: true,
+            feeTxHash: feeVerification.feeTxHash,
+          },
+          explorer: {
+            mainTx: getExplorerUrl(txHash),
+            feeTx: feeVerification.feeTxHash ? getExplorerUrl(feeVerification.feeTxHash) : null,
+          },
+        };
+      } catch (error) {
+        logger.error({ error: String(error), txHash, agentId: agent?._id }, "Transaction verification failed");
+        set.status = 500;
+        return { error: "Verification failed", details: String(error) };
       }
-
-      logger.info({
-        agentId: agent._id,
-        walletAddress: agent.walletAddress,
-        amount: parsed.amount,
-        currency: parsed.currency,
-        type: transactionType,
-        protocol: "solana",
-        hash: result.hash,
-        fee: result.fee,
-        idempotencyKey: idempotencyKey || undefined,
-      }, "Transaction recorded");
-
-      return {
-        status: "settled" as const,
-        hash: result.hash,
-        fee_deducted: result.fee,
-        net_amount: result.netAmount,
-        protocol: "solana",
-        transaction_type: transactionType,
-        timestamp: Date.now(),
-      };
     },
     {
       body: t.Object({
-        payload: t.Object({
-          targetWallet: t.String(),
-          amount: t.Number(),
-          currency: t.Optional(t.String()),
-        }),
-        idempotencyKey: t.Optional(t.String()),
-      }),
-    }
-  )
-  .post(
-    "/prepare",
-    async ({ body, headers, set }) => {
-      const authHeader = headers.authorization || headers.Authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        set.status = 401;
-        return { error: "Missing authorization header" };
-      }
-
-      const token = authHeader.slice(7);
-      const agent = await getConvexClient().query(api.sessions.getAgentFromToken, { token });
-
-      if (!agent) {
-        set.status = 401;
-        return { error: "Invalid or expired token" };
-      }
-
-      const { targetWallet, amount, currency } = body as {
-        targetWallet: string;
-        amount: number;
-        currency?: string;
-      };
-
-      // Basic validation for Solana addresses
-      if (!targetWallet || targetWallet.length < 32 || targetWallet.length > 44) {
-        set.status = 400;
-        return { error: "Invalid payload", details: "Invalid Solana address format" };
-      }
-
-      const nonce = generateNonce();
-      const expiresAt = Date.now() + 15 * 60 * 1000;
-
-      return {
-        nonce,
-        expiresAt,
-        instructions: "Use Phantom wallet to sign and send USDC transaction",
-      };
-    },
-    {
-      body: t.Object({
-        targetWallet: t.String(),
-        amount: t.Number(),
-        currency: t.Optional(t.String()),
+        txHash: t.String(),
       }),
     }
   )
@@ -195,14 +192,14 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
   .get("/agent/:agentId", async ({ params }) => {
     const convex = getConvexClient();
     const txns = await convex.query(api.transactions.getByAgent, {
-      agentId: params.agentId as string,
+      agentId: params.agentId as any,
     });
     return { transactions: txns };
   })
   .get("/volume", async ({ query }) => {
     const convex = getConvexClient();
     const volume = await convex.query(api.transactions.getTotalVolume, {
-      agentId: query.agentId as string | undefined,
+      agentId: query.agentId as any,
     });
     return { volume };
   })
@@ -211,137 +208,26 @@ export const ledgerRoutes = new Elysia({ prefix: "/v1/ledger" })
     const revenue = await convex.query(api.transactions.getFeeRevenue, {});
     return { feeRevenue: revenue };
   })
-  .post(
-    "/verify",
-    async ({ body, headers, set }) => {
-      const convex = getConvexClient();
-      const authHeader = headers.authorization || headers.Authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        set.status = 401;
-        return { error: "Missing authorization header" };
-      }
-
-      const token = authHeader.slice(7);
-      const agent = await convex.query(api.sessions.getAgentFromToken, { token });
-
-      if (!agent) {
-        set.status = 401;
-        return { error: "Invalid or expired token" };
-      }
-
-      const { txHash, chainId, amount, currency, toAddress } = body as {
-        txHash: string;
-        chainId?: number;
-        amount: number;
-        currency?: string;
-        toAddress?: string;
-      };
-
-      if (!txHash) {
-        set.status = 400;
-        return { error: "Missing txHash" };
-      }
-
-      // For Solana, we verify the transaction on-chain
-      // For now, we'll record it directly - actual verification can be added later
-      try {
-        // TODO: Add Solana transaction verification
-        // For now, trust the transaction hash provided
-        const transactionType = "credit";
-        
-        logger.info({
-          txHash,
-          agentId: agent._id,
-          amount,
-          currency: currency || "USDC",
-          from: "solana"
-        }, "Recording Solana transaction");
-        
-        const recordResult = await convex.mutation(api.transactions.record, {
-          agentId: agent._id as string,
-          amount,
-          currency: currency || "USDC",
-          type: transactionType,
-          metadata: {
-            protocol: "onchain",
-            txHash,
-            chainId: "solana:devnet",
-            isOnChain: true,
-          },
-          protocol: "onchain",
-        });
-
-        logger.info({
-          agentId: agent._id,
-          walletAddress: agent.walletAddress,
-          amount,
-          currency: currency || "USDC",
-          type: transactionType,
-          txHash,
-          hash: recordResult.hash,
-        }, "Solana transaction recorded");
-
-        return {
-          verified: true,
-          transaction: {
-            hash: recordResult.hash,
-            amount,
-            currency: currency || "USDC",
-            type: transactionType,
-          },
-          explorer: {
-            url: `https://explorer.solana.com/tx/${txHash}?cluster=devnet`,
-          },
-        };
-      } catch (error) {
-        logger.error({ error: String(error), txHash, agentId: agent?._id }, "Transaction recording failed");
-        set.status = 500;
-        return { error: "Recording failed", details: String(error) };
-      }
-    },
-    {
-      body: t.Object({
-        txHash: t.String(),
-        chainId: t.Optional(t.Number()),
-        amount: t.Number(),
-        currency: t.Optional(t.String()),
-        toAddress: t.Optional(t.String()),
-      }),
-    }
-  )
-  .get("/config", async ({ set }) => {
-    const treasuryWallet = process.env.SOLANA_TREASURY_WALLET || '';
-    if (treasuryWallet) {
-      setTreasuryWallet(treasuryWallet);
-    }
-    
-    const config = getSolanaConfig('devnet');
+  .get("/config", async () => {
+    const treasuryWallet = getTreasuryWallet();
     
     return {
       chain: "solana",
-      network: "devnet",
-      chainId: "solana:devnet",
-      usdcMint: config.usdcMint,
+      network: "mainnet",
+      chainId: "solana:mainnet",
       treasuryWallet: treasuryWallet || null,
-      feeBps: 10,
+      feeBps: FEE_BPS,
       feePercentage: "0.1%",
       status: treasuryWallet ? "active" : "not_configured",
-      instructions: !treasuryWallet ? {
-        step1: "Set SOLANA_TREASURY_WALLET in environment variables",
-        step2: "Restart server",
-        getTokens: "Run 'solana airdrop 2' to get SOL, get USDC from faucet"
-      } : null,
-      rpcUrl: config.rpcUrl
+      explorer: "https://explorer.solana.com",
+      usdcStatus: "Coming Soon",
+      rpcNote: "Upgrade to Helius/QuickNode for production",
     };
   })
-  .get("/balance/:address", async ({ params, set }) => {
-    const { address } = params;
-    
-    try {
-      const balance = await getUSDCBalance(address, 'devnet');
-      return { address, balance, currency: "USDC" };
-    } catch (error) {
-      set.status = 500;
-      return { error: "Failed to get balance" };
-    }
+  .get("/balance/:address", async ({ set }) => {
+    set.status = 501;
+    return { 
+      error: "Balance endpoint deprecated", 
+      message: "Use Phantom wallet to check SOL balance. USDC support coming soon." 
+    };
   });

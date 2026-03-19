@@ -1,169 +1,240 @@
 import {
   Connection,
   PublicKey,
-  Transaction,
-  SystemProgram,
-  Keypair,
 } from '@solana/web3.js';
-import {
-  getAssociatedTokenAddress,
-  createTransferInstruction,
-  getOrCreateAssociatedTokenAccount,
-} from '@solana/spl-token';
 
-const SOLANA_DEVNET = 'https://api.devnet.solana.com';
+// Mainnet RPC - upgrade to Helius/QuickNode for production
 const SOLANA_MAINNET = 'https://api.mainnet-beta.solana.com';
 
-// USDC on Solana Devnet
-const USDC_DEVNET = 'Gh9kkMbrD8WNCT4kP1D9R9WSXc9iN9h3XwWJ8y1MmM3'; // USDC Devnet
-// USDC on Solana Mainnet  
-const USDC_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4XtEGUrFAbcXw3'; // USDC on Mainnet
-
-const FEE_BPS = 10; // 0.1%
+const LAMPORTS_PER_SOL = 1_000_000_000;
+export const FEE_BPS = 10; // 0.1%
 
 interface SolanaConfig {
   rpcUrl: string;
-  usdcMint: string;
   treasuryWallet: string;
-  programId?: string;
 }
 
-const configs: Record<string, SolanaConfig> = {
-  devnet: {
-    rpcUrl: SOLANA_DEVNET,
-    usdcMint: USDC_DEVNET,
-    treasuryWallet: '', // Set after deployment
-    programId: '', // Set after program deployment
-  },
-  mainnet: {
-    rpcUrl: SOLANA_MAINNET,
-    usdcMint: USDC_MAINNET,
-    treasuryWallet: '', // Set after deployment
-  },
+let config: SolanaConfig = {
+  rpcUrl: SOLANA_MAINNET,
+  treasuryWallet: '',
 };
 
-export function getSolanaConfig(network: 'devnet' | 'mainnet' = 'devnet'): SolanaConfig {
-  return configs[network];
+export function setTreasuryWallet(wallet: string) {
+  config.treasuryWallet = wallet;
 }
 
-export function setTreasuryWallet(wallet: string, network: 'devnet' | 'mainnet' = 'devnet') {
-  configs[network].treasuryWallet = wallet;
+export function getTreasuryWallet(): string {
+  return config.treasuryWallet;
 }
 
-export function setProgramId(programId: string, network: 'devnet' | 'mainnet' = 'devnet') {
-  configs[network].programId = programId;
+export async function getConnection(): Promise<Connection> {
+  return new Connection(config.rpcUrl, 'confirmed');
 }
 
-export async function getConnection(network: 'devnet' | 'mainnet' = 'devnet'): Promise<Connection> {
-  return new Connection(configs[network].rpcUrl, 'confirmed');
-}
-
-export async function getUSDCBalance(
-  address: string,
-  network: 'devnet' | 'mainnet' = 'devnet'
-): Promise<number> {
-  const config = getSolanaConfig(network);
-  const connection = await getConnection(network);
-  const publicKey = new PublicKey(address);
-  const usdcMint = new PublicKey(config.usdcMint);
-
+export async function getSOLBalance(address: string): Promise<number> {
   try {
-    const tokenAccount = await getAssociatedTokenAddress(usdcMint, publicKey);
-    const balance = await connection.getTokenAccountBalance(tokenAccount);
-    return balance.value.uiAmount || 0;
+    const connection = await getConnection();
+    const publicKey = new PublicKey(address);
+    const balance = await connection.getBalance(publicKey);
+    return balance / LAMPORTS_PER_SOL;
   } catch {
     return 0;
   }
 }
 
-export async function processPayment(
-  senderAddress: string,
-  recipientAddress: string,
-  amount: number, // in USDC (e.g., 10 = 10 USDC)
-  senderSecretKey?: number[],
-  network: 'devnet' | 'mainnet' = 'devnet'
-): Promise<{
-  success: boolean;
-  signature?: string;
-  fee?: number;
+export interface VerifiedTransaction {
+  signature: string;
+  from: string;
+  to: string;
+  amount: number;
+  fee: number;
+  netAmount: number;
+  timestamp: number;
+  slot: number;
+}
+
+export async function verifyTransaction(txHash: string): Promise<{
+  valid: boolean;
   error?: string;
+  transaction?: VerifiedTransaction;
 }> {
-  const config = getSolanaConfig(network);
-  
-  if (!config.treasuryWallet) {
-    return { success: false, error: 'Treasury wallet not configured' };
-  }
-
   try {
-    const connection = await getConnection(network);
-    const sender = new PublicKey(senderAddress);
-    const recipient = new PublicKey(recipientAddress);
-    const treasury = new PublicKey(config.treasuryWallet);
-    const usdcMint = new PublicKey(config.usdcMint);
+    const connection = await getConnection();
+    
+    const transaction = await connection.getTransaction(txHash, {
+      maxSupportedTransactionVersion: 0,
+    });
 
-    // Calculate fee
-    const amountSmallest = Math.round(amount * 1_000_000); // USDC has 6 decimals
-    const fee = Math.round((amountSmallest * FEE_BPS) / 10000);
-    const netAmount = amountSmallest - fee;
+    if (!transaction) {
+      return { valid: false, error: 'Transaction not found or not confirmed' };
+    }
 
-    // For client-side transactions (wallet adapter)
-    // This returns instructions that the frontend will execute
-    const senderUsdcAccount = await getAssociatedTokenAddress(usdcMint, sender);
-    const recipientUsdcAccount = await getAssociatedTokenAddress(usdcMint, recipient);
-    const treasuryUsdcAccount = await getAssociatedTokenAddress(usdcMint, treasury);
+    if (transaction.meta?.err) {
+      return { valid: false, error: 'Transaction failed on-chain' };
+    }
+
+    const accountKeys = transaction.transaction.message.getAccountKeys();
+    const preBalances = transaction.meta?.preBalances || [];
+    const postBalances = transaction.meta?.postBalances || [];
+    
+    const signatures = transaction.transaction.signatures;
+    if (!signatures || signatures.length === 0) {
+      return { valid: false, error: 'No signatures found in transaction' };
+    }
+    const senderPublicKey = accountKeys.get(0)?.toBase58() || '';
+    
+    let receiverPublicKey = '';
+    let lamportAmount = 0;
+    
+    for (let i = 0; i < accountKeys.length; i++) {
+      const balanceChange = (postBalances[i] || 0) - (preBalances[i] || 0);
+      if (balanceChange > 0) {
+        const pubkey = accountKeys.get(i)?.toBase58();
+        if (pubkey && pubkey !== senderPublicKey) {
+          receiverPublicKey = pubkey;
+          lamportAmount = balanceChange;
+          break;
+        }
+      }
+    }
+
+    if (!receiverPublicKey) {
+      return { valid: false, error: 'Could not parse transaction recipients' };
+    }
+
+    const amountSol = Number(lamportAmount) / LAMPORTS_PER_SOL;
+    const fee = (amountSol * FEE_BPS) / 10000;
+    const netAmount = amountSol - fee;
 
     return {
-      success: true,
-      instructions: [
-        // Transfer fee to treasury
-        createTransferInstruction(
-          senderUsdcAccount,
-          treasuryUsdcAccount,
-          sender,
-          fee
-        ),
-        // Transfer net amount to recipient
-        createTransferInstruction(
-          senderUsdcAccount,
-          recipientUsdcAccount,
-          sender,
-          netAmount
-        ),
-      ],
-      fee: fee / 1_000_000,
-      recipientUsdcAccount: recipientUsdcAccount.toBase58(),
-      treasuryUsdcAccount: treasuryUsdcAccount.toBase58(),
+      valid: true,
+      transaction: {
+        signature: txHash,
+        from: senderPublicKey,
+        to: receiverPublicKey,
+        amount: amountSol,
+        fee: fee,
+        netAmount: netAmount,
+        timestamp: transaction.blockTime || Math.floor(Date.now() / 1000),
+        slot: transaction.slot,
+      },
     };
   } catch (error) {
     return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Payment failed',
+      valid: false,
+      error: error instanceof Error ? error.message : 'Failed to verify transaction',
     };
   }
 }
 
-export function getNetworkFromChainId(chainId: string): 'devnet' | 'mainnet' {
-  if (chainId === 'solana:devnet' || chainId === 'devnet') {
-    return 'devnet';
+export async function verifyFeeTransfer(
+  mainTxHash: string,
+  mainAmount: number,
+  treasuryWallet: string,
+  maxBlocksLookback: number = 10
+): Promise<{
+  valid: boolean;
+  error?: string;
+  feeTxHash?: string;
+  actualFee?: number;
+}> {
+  if (!treasuryWallet) {
+    return { valid: false, error: 'Treasury wallet not configured' };
   }
-  return 'mainnet';
-}
 
-export async function getTransactionHistory(
-  address: string,
-  network: 'devnet' | 'mainnet' = 'devnet'
-): Promise<any[]> {
-  const connection = await getConnection(network);
-  const publicKey = new PublicKey(address);
+  const connection = await getConnection();
   
-  const signatures = await connection.getSignaturesForAddress(publicKey, { limit: 10 });
-  return signatures;
+  try {
+    const mainTx = await connection.getTransaction(mainTxHash, {
+      maxSupportedTransactionVersion: 0,
+    });
+    
+    if (!mainTx) {
+      return { valid: false, error: 'Main transaction not found' };
+    }
+
+    const mainSlot = mainTx.slot;
+    const startSlot = Math.max(0, mainSlot - maxBlocksLookback);
+    
+    const signatures = await connection.getSignaturesForAddress(
+      new PublicKey(treasuryWallet),
+      { limit: 100 },
+    );
+
+    const expectedFee = (mainAmount * FEE_BPS) / 10000;
+    const feeLamports = Math.floor(expectedFee * LAMPORTS_PER_SOL);
+
+    for (const sigInfo of signatures) {
+      if (sigInfo.slot < startSlot) continue;
+      
+      const feeTx = await connection.getTransaction(sigInfo.signature, {
+        maxSupportedTransactionVersion: 0,
+      });
+      
+      if (!feeTx || feeTx.meta?.err) continue;
+      
+      const feeAccountKeys = feeTx.transaction.message.getAccountKeys();
+      const feePreBalances = feeTx.meta?.preBalances || [];
+      const feePostBalances = feeTx.meta?.postBalances || [];
+      
+      for (let i = 0; i < feeAccountKeys.length; i++) {
+        const pubkey = feeAccountKeys.get(i)?.toBase58();
+        if (pubkey === treasuryWallet) {
+          const balanceChange = (feePostBalances[i] ?? 0) - (feePreBalances[i] ?? 0);
+          
+          if (balanceChange === feeLamports) {
+            return {
+              valid: true,
+              feeTxHash: sigInfo.signature,
+              actualFee: expectedFee,
+            };
+          }
+        }
+      }
+    }
+
+    return {
+      valid: false,
+      error: `Fee transfer of ${expectedFee} SOL not found to treasury wallet`,
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      error: error instanceof Error ? error.message : 'Failed to verify fee transfer',
+    };
+  }
 }
 
-export function getExplorerUrl(signature: string, network: 'devnet' | 'mainnet' = 'devnet'): string {
-  const base = network === 'devnet' 
-    ? 'https://explorer.solana.com' 
-    : 'https://explorer.solana.com';
-  const cluster = network === 'devnet' ? '?cluster=devnet' : '';
-  return `${base}/tx/${signature}${cluster}`;
+export function calculateFee(amount: number): number {
+  return (amount * FEE_BPS) / 10000;
+}
+
+export function lamportsToSOL(lamports: number): number {
+  return lamports / LAMPORTS_PER_SOL;
+}
+
+export function solToLamports(sol: number): number {
+  return Math.floor(sol * LAMPORTS_PER_SOL);
+}
+
+export function getExplorerUrl(signature: string): string {
+  return `https://explorer.solana.com/tx/${signature}`;
+}
+
+export function isValidSolanaAddress(address: string): boolean {
+  try {
+    new PublicKey(address);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isValidTransactionSignature(signature: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{86,88}$/.test(signature);
+}
+
+export async function getUSDCBalance(_address: string): Promise<number> {
+  console.log('USDC support - coming soon');
+  return 0;
 }

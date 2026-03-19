@@ -13,7 +13,8 @@
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
-    "admin:bootstrap": "bun run scripts/admin-bootstrap.ts"
+    "admin:bootstrap": "bun run scripts/admin-bootstrap.ts",
+    "demo:agent": "bun run scripts/demo-agent.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.1.1",

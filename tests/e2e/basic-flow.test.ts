@@ -9,13 +9,19 @@ interface Agent {
   balance: number;
 }
 
-let agentA: Agent | null = null;
-let agentB: Agent | null = null;
+let testAgent: Agent | null = null;
 
-async function createDevAgent(walletSuffix: string = ""): Promise<Agent> {
-  const walletAddress = walletSuffix 
-    ? `0x${walletSuffix.padStart(40, "0").slice(0, 40)}`
-    : `0x${Math.random().toString(16).slice(2, 42).padEnd(40, "0")}`;
+function generateSolanaAddress(): string {
+  const chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let result = '';
+  for (let i = 0; i < 44; i++) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return result;
+}
+
+async function createDevAgent(): Promise<Agent> {
+  const walletAddress = generateSolanaAddress();
 
   const res = await fetch(`${API_URL}/v1/auth/dev/create`, {
     method: "POST",
@@ -39,27 +45,29 @@ async function createDevAgent(walletSuffix: string = ""): Promise<Agent> {
   };
 }
 
-async function transact(fromToken: string, toWallet: string, amount: number) {
-  const res = await fetch(`${API_URL}/v1/ledger/transact`, {
+async function verifyTransaction(token: string, txHash: string) {
+  const res = await fetch(`${API_URL}/v1/ledger/verify`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${fromToken}`,
+      "Authorization": `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      protocol: "x402",
-      payload: {
-        targetWallet: toWallet,
-        amount,
-        currency: "USDC",
-      },
-    }),
+    body: JSON.stringify({ txHash }),
   });
 
   return {
     status: res.status,
     data: await res.json(),
   };
+}
+
+async function getLedgerConfig(token: string) {
+  const res = await fetch(`${API_URL}/v1/ledger/config`, {
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+  });
+  return res.json();
 }
 
 async function getRecentTransactions(token: string) {
@@ -91,89 +99,102 @@ describe("Maltheron E2E Flow", () => {
     console.log("✓ Health check passed");
   });
 
-  test("2. Create two dev agents", async () => {
-    agentA = await createDevAgent("aaaa");
-    agentB = await createDevAgent("bbbb");
+  test("2. Create a dev agent", async () => {
+    testAgent = await createDevAgent();
 
-    expect(agentA.token).toBeDefined();
-    expect(agentB.token).toBeDefined();
-    expect(agentA.walletAddress).toMatch(/^0x[a-f0-9]{40}$/);
-    expect(agentB.walletAddress).toMatch(/^0x[a-f0-9]{40}$/);
+    expect(testAgent.token).toBeDefined();
+    expect(testAgent.walletAddress).toHaveLength(44);
     
-    console.log(`✓ Created Agent A: ${agentA.walletAddress.slice(0, 10)}...`);
-    console.log(`✓ Created Agent B: ${agentB.walletAddress.slice(0, 10)}...`);
+    console.log(`✓ Created Agent: ${testAgent.walletAddress.slice(0, 10)}...`);
   });
 
-  test("3. Agent A sends 1000 USDC to Agent B", async () => {
-    if (!agentA || !agentB) throw new Error("Agents not created");
+  test("3. Ledger config returns Solana mainnet settings", async () => {
+    if (!testAgent) throw new Error("Agent not created");
 
-    const result = await transact(agentA.token, agentB.walletAddress, 1000);
+    const config = await getLedgerConfig(testAgent.token);
     
-    expect(result.status).toBe(200);
-    expect(result.data.status).toBe("settled");
-    expect(result.data.fee_deducted).toBe(1); // 0.1% of 1000
+    expect(config.chain).toBe("solana");
+    expect(config.network).toBe("mainnet");
+    expect(config.feeBps).toBe(10);
+    expect(config.feePercentage).toBe("0.1%");
+    expect(config.treasuryWallet).toBeDefined();
     
-    console.log(`✓ Transferred 1000 USDC (fee: ${result.data.fee_deducted} USDC)`);
+    console.log(`✓ Ledger config: ${config.chain} ${config.network}`);
+    console.log(`   Treasury: ${config.treasuryWallet?.slice(0, 10)}...`);
   });
 
-  test("4. Verify transaction recorded", async () => {
-    if (!agentA) throw new Error("Agent A not created");
+  test("4. Verify endpoint rejects invalid txHash format", async () => {
+    if (!testAgent) throw new Error("Agent not created");
 
-    const transactions = await getRecentTransactions(agentA.token);
-    
-    expect(transactions.transactions).toBeDefined();
-    expect(transactions.transactions.length).toBeGreaterThan(0);
-    
-    const debitTx = transactions.transactions.find((t: any) => t.type === "debit");
-    
-    // Debit shows net amount after fee (1000 - 1 = 999)
-    expect(debitTx?.amount).toBe(999);
-    
-    console.log(`✓ Verified transaction recorded: ${debitTx?.amount} USDC (net after fee)`);
-  });
-
-  test("5. Query memory returns dimensions", async () => {
-    if (!agentA) throw new Error("Agent A not created");
-
-    const memory = await queryMemory(agentA.token);
-    
-    // Memory might be empty for new agents, but endpoint should work
-    expect(memory).toBeDefined();
-    
-    console.log(`✓ Memory query works: ${JSON.stringify(memory).slice(0, 100)}`);
-  });
-
-  test("6. Agent B can also transact", async () => {
-    if (!agentB) throw new Error("Agent B not created");
-
-    // Agent B sends back to a different wallet
-    const result = await transact(
-      agentB.token, 
-      "0x9999999999999999999999999999999999999999", 
-      500
+    const result = await verifyTransaction(
+      testAgent.token,
+      "invalid_tx_hash"
     );
     
-    expect(result.status).toBe(200);
-    console.log(`✓ Agent B can transact`);
+    expect(result.status).toBe(400);
+    expect(result.data.valid).toBe(false);
+    
+    console.log(`✓ Invalid txHash rejected with: ${result.data.error}`);
   });
 
-  test("7. Get agent stats", async () => {
-    if (!agentA) throw new Error("Agent A not created");
+  test("5. Verify endpoint rejects non-existent txHash", async () => {
+    if (!testAgent) throw new Error("Agent not created");
 
-    const res = await fetch(`${API_URL}/v1/agents/${agentA.id}`, {
+    const fakeTxHash = "1".repeat(88);
+    const result = await verifyTransaction(
+      testAgent.token,
+      fakeTxHash
+    );
+    
+    expect(result.status).toBe(400);
+    expect(result.data.valid).toBe(false);
+    
+    console.log(`✓ Non-existent txHash rejected`);
+  });
+
+  test("6. Get recent transactions", async () => {
+    if (!testAgent) throw new Error("Agent not created");
+
+    const transactions = await getRecentTransactions(testAgent.token);
+    
+    expect(transactions.transactions).toBeDefined();
+    expect(Array.isArray(transactions.transactions)).toBe(true);
+    
+    console.log(`✓ Retrieved ${transactions.transactions.length} transactions`);
+  });
+
+  test("7. Query memory returns dimensions", async () => {
+    if (!testAgent) throw new Error("Agent not created");
+
+    const memory = await queryMemory(testAgent.token);
+    
+    expect(memory).toBeDefined();
+    
+    console.log(`✓ Memory query works`);
+  });
+
+  test("8. Unauthorized requests are rejected", async () => {
+    const res = await fetch(`${API_URL}/v1/ledger/verify`, {
+      method: "POST",
       headers: {
-        "Authorization": `Bearer ${agentA.token}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        txHash: "1".repeat(88),
+      }),
     });
-    const data = await res.json();
+
+    expect(res.status).toBe(401);
     
-    expect(res.status).toBe(200);
-    expect(data).toBeDefined();
-    
-    console.log(`✓ Agent query works`);
+    console.log(`✓ Unauthorized requests rejected`);
   });
 });
 
 console.log("\n🦊 Maltheron E2E Test Suite");
 console.log(`   API: ${API_URL}`);
+console.log(`   Network: Solana Mainnet`);
 console.log(`   Run: bun test\n`);
+console.log("NOTE: Full verification requires:");
+console.log("      1. Send SOL to recipient via Phantom");
+console.log("      2. Send 0.1% fee to treasury via Phantom");
+console.log("      3. Submit main txHash to /v1/ledger/verify\n");
