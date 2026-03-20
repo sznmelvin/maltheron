@@ -14,8 +14,8 @@ function generateSolanaAddress(): string {
 }
 
 async function createDevAgent(walletAddress: string) {
-  console.log("\n📋 Step 1: Creating dev agent...\n");
-  const res = await fetch(`${API_URL}/v1/auth/dev/create`, {
+  console.log("\n📋 Step 1: Creating agent session...\n");
+  const res = await fetch(`${API_URL}/v1/auth/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ walletAddress }),
@@ -28,7 +28,7 @@ async function createDevAgent(walletAddress: string) {
     process.exit(1);
   }
 
-  console.log("✅ Agent created successfully!");
+  console.log("✅ Session created successfully!");
   console.log(`   Wallet: ${walletAddress.slice(0, 10)}...${walletAddress.slice(-6)}`);
   console.log(`   Token:  ${data.token.slice(0, 20)}...`);
 
