@@ -2,10 +2,12 @@ import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
+import { isValidSolanaAddress } from "../lib/solana";
 import pino from "pino";
 import { authRateLimit } from "../lib/rate-limit";
 
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+const NONCE_PREFIX = "Sign to login to Maltheron: ";
 
 const logger = pino({ name: "maltheron:auth" });
 
@@ -23,8 +25,34 @@ function generateToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function isValidSolanaAddress(address: string): boolean {
-  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+function verifySolanaSignature(
+  message: string,
+  signatureBase64: string,
+  walletAddress: string
+): boolean {
+  try {
+    const { PublicKey } = require("@solana/web3.js");
+    const { nacl } = require("tweetnacl");
+
+    const messageBytes = new TextEncoder().encode(message);
+    const signatureBytes = Buffer.from(signatureBase64, "base64");
+    const publicKey = new PublicKey(walletAddress);
+
+    const messageHash = Buffer.from(messageBytes);
+    const sig = Buffer.from(signatureBytes);
+
+    return nacl.sign.detached.verify(messageHash, sig, publicKey.toBytes());
+  } catch (error) {
+    logger.error({ error: String(error) }, "Signature verification error");
+    return false;
+  }
+}
+
+function extractNonce(message: string): string | null {
+  if (!message.startsWith(NONCE_PREFIX)) {
+    return null;
+  }
+  return message.slice(NONCE_PREFIX.length);
 }
 
 export const authRoutes = new Elysia({ prefix: "/v1/auth" })
@@ -32,7 +60,12 @@ export const authRoutes = new Elysia({ prefix: "/v1/auth" })
   .use(authRateLimit)
   .post("/session", async ({ body, set }) => {
     const convex = getConvexClient();
-    const { walletAddress } = body as { walletAddress: string };
+    const { walletAddress, signature, message, nonce } = body as {
+      walletAddress: string;
+      signature?: string;
+      message?: string;
+      nonce?: string;
+    };
 
     if (!walletAddress) {
       set.status = 400;
@@ -44,13 +77,49 @@ export const authRoutes = new Elysia({ prefix: "/v1/auth" })
       return { error: "Invalid Solana wallet address format" };
     }
 
+    // If signature and message provided, verify them (Phantom wallet flow)
+    if (signature && message) {
+      const extractedNonce = extractNonce(message);
+
+      if (!extractedNonce) {
+        set.status = 400;
+        return { error: "Invalid message format. Expected 'Sign to login to Maltheron: [nonce]'" };
+      }
+
+      // Validate nonce exists and hasn't been used
+      const nonceRecord = await convex.query(api.nonces.validate, { nonce: extractedNonce });
+
+      if (!nonceRecord) {
+        set.status = 401;
+        return { error: "Invalid or expired nonce. Please refresh and try again." };
+      }
+
+      // Verify signature
+      const isValid = verifySolanaSignature(message, signature, walletAddress);
+
+      if (!isValid) {
+        logger.warn({ walletAddress }, "Signature verification failed");
+        set.status = 401;
+        return { error: "Signature verification failed" };
+      }
+
+      // Consume the nonce (mark as used)
+      await convex.mutation(api.nonces.consume, { nonce: extractedNonce });
+
+      logger.info({ walletAddress, nonce: extractedNonce }, "Session created via Phantom wallet");
+    } else {
+      // Test mode or simple session (no signature verification)
+      logger.info({ walletAddress }, "Session created (test mode or simple session)");
+    }
+
+    // Create or get agent
     let agent = await convex.query(api.agents.getByWallet, { walletAddress });
 
     if (!agent) {
       agent = await convex.mutation(api.agents.create, {
         walletAddress,
         tier: "standard",
-        metadata: { chain: "solana" },
+        metadata: { chain: "solana", loginMethod: signature ? "phantom" : "test" },
       });
     }
 
@@ -63,12 +132,10 @@ export const authRoutes = new Elysia({ prefix: "/v1/auth" })
     const expiresAt = Date.now() + SESSION_EXPIRY_MS;
 
     await convex.mutation(api.sessions.createSession, {
-      agentId: agent._id as string,
+      agentId: agent._id as any,
       token,
       expiresAt,
     });
-
-    logger.info({ walletAddress }, "Session created");
 
     return {
       token,
@@ -84,6 +151,9 @@ export const authRoutes = new Elysia({ prefix: "/v1/auth" })
   }, {
     body: t.Object({
       walletAddress: t.String(),
+      signature: t.Optional(t.String()),
+      message: t.Optional(t.String()),
+      nonce: t.Optional(t.String()),
     }),
   })
   .post("/dev/create", async ({ body, set }) => {
@@ -130,7 +200,7 @@ export const authRoutes = new Elysia({ prefix: "/v1/auth" })
       const expiresAt = Date.now() + SESSION_EXPIRY_MS;
 
       await convex.mutation(api.sessions.createSession, {
-        agentId: agent._id as string,
+        agentId: agent._id as any,
         token,
         expiresAt,
       });

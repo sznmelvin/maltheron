@@ -43,8 +43,8 @@ export const validate = query({
       return null;
     }
 
+    // Just check expiry - don't delete here (cleanup mutation handles that)
     if (nonceRecord.expiresAt < Date.now()) {
-      await ctx.db.delete(nonceRecord._id);
       return null;
     }
 

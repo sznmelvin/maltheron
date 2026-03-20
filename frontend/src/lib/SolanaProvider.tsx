@@ -1,10 +1,11 @@
-import { createContext, useContext, ReactNode, useState, useEffect } from 'react';
+import { createContext, useContext, ReactNode, useState, useEffect, useCallback } from 'react';
 
 export interface SolanaWallet {
   address: string;
   connected: boolean;
-  connect: () => void;
-  disconnect: () => void;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  signMessage: (message: string) => Promise<{ signature: string; publicKey: string } | null>;
 }
 
 const WalletContext = createContext<SolanaWallet | null>(null);
@@ -16,6 +17,7 @@ declare global {
         isPhantom?: boolean;
         connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: { toBase58: () => string } }>;
         disconnect: () => Promise<void>;
+        signMessage: (message: Uint8Array) => Promise<{ signature: Uint8Array; publicKey: { toBase58: () => string } }>;
         on: (event: string, callback: (...args: any[]) => void) => void;
         off: (event: string, callback: (...args: any[]) => void) => void;
       };
@@ -77,8 +79,31 @@ export function SolanaProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signMessage = useCallback(async (message: string): Promise<{ signature: string; publicKey: string } | null> => {
+    if (!window.phantom?.solana) {
+      console.error('Phantom wallet not found');
+      return null;
+    }
+
+    try {
+      const encodedMessage = new TextEncoder().encode(message);
+      const response = await window.phantom.solana.signMessage(encodedMessage);
+      
+      // Convert Uint8Array to base64
+      const signatureBase64 = btoa(String.fromCharCode(...response.signature));
+      
+      return {
+        signature: signatureBase64,
+        publicKey: response.publicKey.toBase58(),
+      };
+    } catch (err) {
+      console.error('Failed to sign message:', err);
+      return null;
+    }
+  }, []);
+
   return (
-    <WalletContext.Provider value={{ address, connected, connect, disconnect }}>
+    <WalletContext.Provider value={{ address, connected, connect, disconnect, signMessage }}>
       {children}
     </WalletContext.Provider>
   );

@@ -102,6 +102,71 @@ Agent wants to pay 100 SOL to recipient:
 Agent submits main txHash → Maltheron verifies both → Records 99.9 SOL net
 ```
 
+## Connecting Phantom Wallet
+
+### Web Flow (Dashboard)
+
+1. Click "Connect Phantom Wallet" on the dashboard
+2. Phantom popup appears - approve connection
+3. Sign the message "Sign to login to Maltheron: [nonce]"
+4. Session created - you're logged in!
+
+### Headless Agent Flow (API)
+
+For programmatic access, agents can authenticate using signature verification:
+
+```javascript
+// 1. Generate a nonce
+const nonce = crypto.randomUUID();
+
+// 2. Create sign message
+const message = `Sign to login to Maltheron: ${nonce}`;
+
+// 3. Sign with Phantom (via wallet adapter or direct API)
+// This is handled by Phantom wallet
+
+// 4. Send to session endpoint
+const response = await fetch('https://maltheron.onrender.com/v1/auth/session', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    walletAddress: 'YourSolanaWallet123...',
+    signature: 'base64_signature_from_phantom',
+    message: message
+  })
+});
+
+const { token, agent } = await response.json();
+// Use token for subsequent API calls
+```
+
+### Session Authentication
+
+Include the token in subsequent requests:
+
+```javascript
+const response = await fetch('https://maltheron.onrender.com/v1/ledger/verify', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  },
+  body: JSON.stringify({ txHash: 'your_tx_signature' })
+});
+```
+
+### Test Mode
+
+For development without Phantom, use the "Initialize test agent" button or:
+
+```bash
+curl -X POST https://maltheron.onrender.com/v1/auth/session \
+  -H "Content-Type: application/json" \
+  -d '{"walletAddress": "YourSolanaWallet123..."}'
+```
+
+This creates a session without signature verification (for testing only).
+
 ## API Endpoints
 
 ### Authentication

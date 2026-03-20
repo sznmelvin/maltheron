@@ -78,8 +78,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export default function DashboardLayout() {
-  const { agent, loading: authLoading, login, logout, isAuthenticated, token } = useAuth();
-  const { connected, connect } = useSolanaWallet();
+  const { agent, loading: authLoading, error, login, loginWithPhantom, logout, isAuthenticated, token } = useAuth();
   const { metrics, refresh: refreshMetrics } = useAgentMetrics(token);
   const memory = useMemoryQuery(token);
   const [timeframe, setTimeframe] = useState("last_30d");
@@ -99,16 +98,17 @@ export default function DashboardLayout() {
     }
   }, [token, isAuthenticated, timeframe, memory.query]);
 
-  const handleWalletConnect = useCallback(async () => {
+  const handleConnect = async () => {
     setConnecting(true);
-    try {
-      await connect();
-    } catch (error) {
-      console.error('Wallet connection error:', error);
-    } finally {
-      setConnecting(false);
-    }
-  }, [connect]);
+    await loginWithPhantom();
+    setConnecting(false);
+  };
+
+  const handleTestMode = async () => {
+    setConnecting(true);
+    await login();
+    setConnecting(false);
+  };
 
   if (authLoading) {
     return (
@@ -130,7 +130,7 @@ export default function DashboardLayout() {
         <header className="px-4 md:px-8 py-4 md:py-6 flex justify-between items-center relative z-10 shrink-0">
           <h1 className="text-xl md:text-2xl font-tiktok text-textPrimary tracking-tight">Maltheron</h1>
           <div className="flex gap-4 items-center">
-            <WalletButton onConnect={handleWalletConnect} size="sm" />
+            <WalletButton onConnect={handleConnect} size="sm" />
           </div>
         </header>
 
@@ -183,19 +183,36 @@ export default function DashboardLayout() {
 
           <div className="bg-surface rounded-3xl p-6 md:p-8">
             <div className="flex items-center gap-3 mb-4">
-              <span className="font-geist text-textSecondary text-sm">Get Started</span>
-              <span className="text-xs font-mono text-textSecondary bg-warning/20 text-warning px-2 py-0.5 rounded">
-                Coming Soon
+              <span className="font-geist text-textSecondary text-sm">Connect Wallet</span>
+              <span className="text-xs font-mono text-success bg-success/10 px-2 py-0.5 rounded">
+                Ready
               </span>
             </div>
+            
+            {error && (
+              <div className="bg-error/10 border border-error/20 rounded-lg px-4 py-3 mb-4">
+                <p className="text-xs font-geist text-error">{error}</p>
+              </div>
+            )}
+            
             <p className="text-textSecondary text-sm font-geist mb-4">
-              Wallet integration and session management in development.
+              Connect your Phantom wallet to create a session. You'll be asked to sign a message.
             </p>
-            <div className="text-textSecondary text-sm font-geist">
-              Or use test mode:
+            
+            <button
+              onClick={handleConnect}
+              disabled={connecting}
+              className="w-full bg-accent hover:bg-gray-800 disabled:bg-gray-400 text-white font-geist font-medium py-2.5 rounded-lg transition-colors mb-4"
+            >
+              {connecting ? "Connecting..." : "Connect Phantom Wallet"}
+            </button>
+            
+            <div className="text-center text-textSecondary text-xs font-geist">
+              <span>or</span>
               <button 
-                onClick={login}
-                className="ml-2 text-textPrimary underline underline-offset-4 hover:text-textSecondary transition-colors"
+                onClick={handleTestMode}
+                disabled={connecting}
+                className="ml-2 text-textPrimary underline underline-offset-4 hover:text-textSecondary transition-colors disabled:opacity-50"
               >
                 Initialize test agent
               </button>
@@ -238,7 +255,7 @@ export default function DashboardLayout() {
             </span>
           </div>
           <div className="flex items-center gap-3 md:gap-6">
-            <WalletButton onConnect={handleWalletConnect} size="sm" />
+            <WalletButton onConnect={handleConnect} size="sm" />
             <div className="text-right">
               <div className="font-mono text-xs text-textSecondary">Balance</div>
               <div className="font-mono text-sm text-success">
