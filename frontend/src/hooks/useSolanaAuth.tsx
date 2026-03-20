@@ -64,14 +64,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setIsDevMode(true);
     try {
-      const devToken = import.meta.env.VITE_DEV_TOKEN;
-      const res = await fetch("/v1/auth/dev/create", {
+      // Generate a random Solana address for test agent
+      const chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+      const walletAddress = Array.from({ length: 44 }, () => 
+        chars[Math.floor(Math.random() * chars.length)]
+      ).join('');
+      
+      const res = await fetch("/v1/auth/session", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(devToken ? { Authorization: `Bearer ${devToken}` } : {}),
-        },
-        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress }),
       });
       if (res.ok) {
         const data = await res.json();

@@ -7,84 +7,60 @@ import LedgerStream from "./LedgerStream";
 import ApiPlayground from "./ApiPlayground";
 import WalletButton from "./WalletButton";
 
-type TabType = "Maltheron Core" | "Solana Transfer" | "USDC Payments" | "Memory";
+type TabType = "Verify SOL" | "Two-Transfer Flow" | "Financial Memory";
 
-const TAB_CONTENT: Record<TabType, { json: string; terminal: { command: string; description: string } }> = {
-  "Maltheron Core": {
-    json: `{
-  "agentConfig": {
-    "maltheron": {
-      "blockchain": "solana",
-      "network": "devnet",
-      "autoSettle": true,
-      "taxEngine": "autonomous"
-    },
-    "env": {
-      "NETWORK": "solana-devnet",
-      "FEE_TIER": "standard"
-    }
-  }
+const TAB_CONTENT: Record<TabType, { 
+  description: string; 
+  steps: string[];
+  code?: string;
+}> = {
+  "Verify SOL": {
+    description: "Submit a SOL transaction hash to verify it on-chain.",
+    steps: [
+      "Agents send SOL via Phantom (outside Maltheron)",
+      "Agents send 0.1% fee to treasury wallet",
+      "Agents POST txHash to Maltheron API",
+      "Maltheron verifies both transfers on-chain",
+    ],
+    code: `POST /v1/ledger/verify
+Body: { "txHash": "signature..." }
+Response: {
+  "valid": true,
+  "verified": true,
+  "transaction": { ... }
 }`,
-    terminal: {
-      command: "$ bunx maltheron init agent --network solana-devnet",
-      description: "Initialize a new agent with Solana Devnet configuration.",
-    },
   },
-  "Solana Transfer": {
-    json: `{
-  "protocol": {
-    "blockchain": "solana",
-    "network": "devnet",
-    "currency": "USDC",
-    "settlement": "on-chain"
-  }
-}`,
-    terminal: {
-      command: "$ solana transfer --recipient <WALLET> --amount 100 --token USDC",
-      description: "Transfer USDC on Solana blockchain.",
-    },
+  "Two-Transfer Flow": {
+    description: "How agents pay with Maltheron: main transfer + fee.",
+    steps: [
+      "1. Agent sends SOL to recipient via Phantom",
+      "2. Agent sends 0.1% fee to treasury wallet",
+      "3. Agent submits main txHash to /v1/ledger/verify",
+      "4. Maltheron records if fee was paid",
+    ],
   },
-  "USDC Payments": {
-    json: `{
-  "payment": {
-    "currency": "USDC",
-    "blockchain": "solana",
-    "network": "devnet",
-    "fee": "0.1%"
-  }
+  "Financial Memory": {
+    description: "Track ROI, spending velocity, and tax liability.",
+    steps: [
+      "ROI - Return on investment calculations",
+      "Spend Velocity - Daily/hourly spending patterns",
+      "Tax Liability - Estimated tax at 15% rate",
+    ],
+    code: `POST /v1/memory/query
+Body: { 
+  "dimension": "roi",
+  "timeframe": "last_30d"
 }`,
-    terminal: {
-      command: "$ maltheron pay --amount 100 --to <WALLET> --token USDC",
-      description: "Make a USDC payment with automatic 0.1% fee.",
-    },
-  },
-  "Memory": {
-    json: `{
-  "memory": {
-    "dimensions": ["roi", "spend_velocity", "tax_liability"],
-    "aggregation": "rolling_30d",
-    "queries": {
-      "roi": "SELECT (revenue - spend) / spend * 100",
-      "velocity": "SELECT SUM(amount) / days",
-      "tax": "SELECT revenue * 0.15"
-    }
-  }
-}`,
-    terminal: {
-      command: "$ maltheron memory query --dimension roi --timeframe 30d",
-      description: "Query financial memory metrics for the last 30 days.",
-    },
   },
 };
 
-function CopyButton({ text, onCopy }: { text: string; onCopy?: (text: string) => void }) {
+function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      onCopy?.(text);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
@@ -94,20 +70,20 @@ function CopyButton({ text, onCopy }: { text: string; onCopy?: (text: string) =>
   return (
     <button 
       onClick={handleCopy}
-      className="font-geist text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:text-textPrimary cursor-pointer"
+      className="font-mono text-xs text-textSecondary hover:text-textPrimary transition-colors cursor-pointer"
     >
-      {copied ? "copied!" : "copy"}
+      {copied ? "✓ copied" : "copy"}
     </button>
   );
 }
 
 export default function DashboardLayout() {
   const { agent, loading: authLoading, login, logout, isAuthenticated, token } = useAuth();
-  const { connected, address, connect } = useSolanaWallet();
+  const { connected, connect } = useSolanaWallet();
   const { metrics, refresh: refreshMetrics } = useAgentMetrics(token);
   const memory = useMemoryQuery(token);
   const [timeframe, setTimeframe] = useState("last_30d");
-  const [activeTab, setActiveTab] = useState<TabType>("Maltheron Core");
+  const [activeTab, setActiveTab] = useState<TabType>("Verify SOL");
   const [connecting, setConnecting] = useState(false);
 
   useEffect(() => {
@@ -123,7 +99,7 @@ export default function DashboardLayout() {
     }
   }, [token, isAuthenticated, timeframe, memory.query]);
 
-  const handleWalletConnect = useCallback(async (walletAddress: string) => {
+  const handleWalletConnect = useCallback(async () => {
     setConnecting(true);
     try {
       await connect();
@@ -137,7 +113,7 @@ export default function DashboardLayout() {
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-textSecondary font-geist animate-pulse">Loading OS...</div>
+        <div className="text-textSecondary font-geist animate-pulse">Loading Maltheron...</div>
       </div>
     );
   }
@@ -148,10 +124,8 @@ export default function DashboardLayout() {
     return (
       <div className="min-h-screen bg-background relative overflow-hidden flex flex-col">
         <div className="absolute top-32 right-[-10%] text-[8rem] font-geist text-textSecondary/5 whitespace-nowrap pointer-events-none select-none hidden md:block">
-          M2M_OS // Solana
+          M2M_OS
         </div>
-
-        <div className="absolute top-0 right-0 w-1/4 h-full bg-stripe-pattern opacity-50 pointer-events-none hidden md:block"></div>
 
         <header className="px-4 md:px-8 py-4 md:py-6 flex justify-between items-center relative z-10 shrink-0">
           <h1 className="text-xl md:text-2xl font-tiktok text-textPrimary tracking-tight">Maltheron</h1>
@@ -161,66 +135,84 @@ export default function DashboardLayout() {
         </header>
 
         <main className="max-w-5xl mx-auto px-4 md:px-8 pt-8 md:pt-12 pb-32 relative z-10 flex-1 overflow-auto">
-          <div className="flex gap-2 mb-6 md:mb-8 flex-wrap">
-            {(Object.keys(TAB_CONTENT) as TabType[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-3 md:px-4 py-1.5 rounded-lg font-geist text-xs md:text-sm transition-colors duration-200 whitespace-nowrap ${
-                  activeTab === tab
-                    ? "bg-[#dcdcdc] text-textPrimary"
-                    : "text-textSecondary hover:text-textPrimary"
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-
-          <div className="bg-surface rounded-3xl p-4 md:p-8 mb-6 relative group">
-            <div className="flex justify-between items-center mb-4 md:mb-6">
-              <span className="font-geist text-textSecondary text-sm">.agent.json</span>
-              <CopyButton text={content.json} />
-            </div>
-            <pre className="font-mono text-xs md:text-sm text-textSecondary leading-relaxed overflow-x-auto whitespace-pre-wrap">
-{content.json}
-            </pre>
-          </div>
-
-          <div className="bg-surface rounded-3xl p-4 md:p-8 relative group">
-            <div className="flex justify-between items-center mb-4 md:mb-6">
-              <span className="font-geist text-textSecondary text-sm">Terminal</span>
-              <CopyButton text={content.terminal.command} />
-            </div>
-            
-            <div className="flex flex-col gap-3 md:gap-4 font-mono text-xs md:text-sm">
-              <div className="text-textSecondary">
-                <span className="text-textPrimary mr-2">$</span> {content.terminal.command}
-              </div>
-               
-              <div className="text-textSecondary mt-2 md:mt-4 text-xs font-tiktok flex items-center gap-2 flex-wrap">
-                <span className="shrink-0">{content.terminal.description}</span>
-                <span className="ml-auto">
-                  {connecting ? (
-                    <span className="text-textSecondary">Authenticating...</span>
-                  ) : (
-                    <WalletButton onConnect={handleWalletConnect} size="sm" />
-                  )}
-                </span>
-              </div>
-
-              <div className="text-textSecondary mt-4 pt-4 border-t border-border/30 text-xs">
-                Or use test mode:
-                <button 
-                  onClick={login}
-                  className="ml-2 text-textPrimary underline underline-offset-4 hover:text-textSecondary transition-colors font-tiktok"
+          <div className="mb-6 md:mb-8">
+            <p className="text-textSecondary text-sm md:text-base font-geist mb-4">
+              Agent-Native Accounting & Financial OS for the M2M economy. Built on Solana.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {(Object.keys(TAB_CONTENT) as TabType[]).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-3 md:px-4 py-1.5 rounded-lg font-geist text-xs md:text-sm transition-colors duration-200 whitespace-nowrap ${
+                    activeTab === tab
+                      ? "bg-[#dcdcdc] text-textPrimary"
+                      : "text-textSecondary hover:text-textPrimary"
+                  }`}
                 >
-                  Initialize test agent ↗
+                  {tab}
                 </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-surface rounded-3xl p-6 md:p-8 mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="font-geist text-textSecondary text-sm">{activeTab}</span>
+            </div>
+            <p className="text-textPrimary font-geist mb-6">{content.description}</p>
+            
+            <div className="space-y-3 mb-6">
+              {content.steps.map((step, i) => (
+                <div key={i} className="flex items-start gap-3">
+                  <span className="text-textSecondary font-mono text-sm mt-0.5">{i + 1}.</span>
+                  <span className="text-textSecondary font-geist text-sm">{step}</span>
+                </div>
+              ))}
+            </div>
+
+            {content.code && (
+              <div className="bg-background rounded-lg p-4 relative">
+                <CopyButton text={content.code} />
+                <pre className="font-mono text-xs text-textSecondary overflow-x-auto">
+                  {content.code}
+                </pre>
               </div>
+            )}
+          </div>
+
+          <div className="bg-surface rounded-3xl p-6 md:p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="font-geist text-textSecondary text-sm">Get Started</span>
+              <span className="text-xs font-mono text-textSecondary bg-warning/20 text-warning px-2 py-0.5 rounded">
+                Coming Soon
+              </span>
+            </div>
+            <p className="text-textSecondary text-sm font-geist mb-4">
+              Wallet integration and session management in development.
+            </p>
+            <div className="text-textSecondary text-sm font-geist">
+              Or use test mode:
+              <button 
+                onClick={login}
+                className="ml-2 text-textPrimary underline underline-offset-4 hover:text-textSecondary transition-colors"
+              >
+                Initialize test agent
+              </button>
             </div>
           </div>
         </main>
+
+        <footer className="border-t border-border bg-surface mt-auto shrink-0">
+          <div className="max-w-5xl mx-auto px-4 md:px-6 py-3 md:py-4 flex items-center justify-between flex-wrap gap-2">
+            <p className="text-xs font-geist text-textSecondary">
+              Maltheron v0.1.0 • Financial OS for M2M economy
+            </p>
+            <p className="text-xs font-mono text-textSecondary">
+              Fee: 0.1% (10 bps) • Network: Solana Mainnet
+            </p>
+          </div>
+        </footer>
       </div>
     );
   }
@@ -238,7 +230,7 @@ export default function DashboardLayout() {
               {agent?.tier?.toUpperCase() || "STANDARD"}
             </span>
             <span className="text-xs font-mono text-textSecondary bg-background px-2 py-1 rounded">
-              Solana Devnet
+              Solana Mainnet
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
@@ -250,7 +242,7 @@ export default function DashboardLayout() {
             <div className="text-right">
               <div className="font-mono text-xs text-textSecondary">Balance</div>
               <div className="font-mono text-sm text-success">
-                {metrics?.balance?.toFixed(2) || agent?.balance?.toFixed(2) || "0.00"} USDC
+                {(metrics?.balance ?? agent?.balance ?? 0).toFixed(4)} SOL
               </div>
             </div>
             <button
@@ -281,28 +273,57 @@ export default function DashboardLayout() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
               title="Balance"
-              value={`${(metrics?.balance ?? agent?.balance ?? 0).toFixed(2)} USDC`}
-              change={metrics?.balance && metrics.balance > 0 ? "+0.00%" : "Active"}
+              value={`${(metrics?.balance ?? agent?.balance ?? 0).toFixed(4)} SOL`}
+              change="Agent balance"
               positive={true}
             />
             <MetricCard
               title="Volume (30d)"
-              value={`${(metrics?.totalVolume ?? 0).toFixed(2)} USDC`}
+              value={`${(metrics?.totalVolume ?? 0).toFixed(2)} SOL`}
               change="Total processed"
               positive={true}
             />
             <MetricCard
               title="ROI (30d)"
               value={roiData ? `${roiData.value}%` : "--"}
-              change={roiData?.metadata ? `Capital: $${(roiData.metadata as any).capitalDeployed?.toFixed(2) || 0}` : "Query memory"}
-              positive={(roiData?.value ?? 0) >= 0}
+              change={roiData?.metadata ? `Capital: ${(roiData.metadata as any).capitalDeployed?.toFixed(2) || 0}` : "Query memory"}
+              positive={(Number(roiData?.value) ?? 0) >= 0}
             />
             <MetricCard
               title="Tax Liability"
-              value={taxData ? `${taxData.value} USDC` : "--"}
+              value={taxData ? `${taxData.value} SOL` : "--"}
               change={taxData?.metadata ? `Rate: ${((taxData.metadata as any).taxRate ?? 0) * 100}%` : "Unpaid"}
               positive={false}
             />
+          </div>
+        </section>
+
+        <section className="bg-surface rounded-2xl p-6">
+          <h2 className="font-tiktok text-lg text-textPrimary mb-4">Two-Transfer Flow</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-background rounded-xl p-4">
+              <h3 className="font-geist text-sm text-textPrimary mb-3">1. Main Transfer</h3>
+              <p className="text-textSecondary text-xs font-geist mb-2">
+                Agent sends SOL to recipient via Phantom wallet.
+              </p>
+              <code className="text-xs font-mono text-accent">
+                100 SOL → Recipient
+              </code>
+            </div>
+            <div className="bg-background rounded-xl p-4">
+              <h3 className="font-geist text-sm text-textPrimary mb-3">2. Fee Transfer</h3>
+              <p className="text-textSecondary text-xs font-geist mb-2">
+                Agent sends 0.1% fee to treasury wallet via Phantom.
+              </p>
+              <code className="text-xs font-mono text-accent">
+                0.1 SOL → Treasury
+              </code>
+            </div>
+          </div>
+          <div className="mt-4 bg-warning/10 border border-warning/20 rounded-lg px-4 py-3">
+            <p className="text-xs font-geist text-warning">
+              <strong>Important:</strong> Both transfers must be confirmed on-chain before submitting txHash to Maltheron.
+            </p>
           </div>
         </section>
 
@@ -318,7 +339,7 @@ export default function DashboardLayout() {
             Maltheron v0.1.0 • The financial operating system for the M2M economy
           </p>
           <p className="text-xs font-mono text-textSecondary">
-            Fee: 0.1% (10 bps) on all transactions
+            Fee: 0.1% (10 bps) • USDC: Coming Soon
           </p>
         </div>
       </footer>
